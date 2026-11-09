@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    name: Test, typecheck, build
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: clinic
+          POSTGRES_PASSWORD: clinic_dev_only
+          POSTGRES_DB: clinic_booking
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U clinic"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://clinic:clinic_dev_only@localhost:5432/clinic_booking
+      STAFF_SESSION_SECRET: ci-session-secret-not-for-production-use
+      ADMIN_EMAIL: admin@clinic.local
+      ADMIN_PASSWORD: CIAdmin2026!
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run database migrations
+        run: npm run db:migrate
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Integration tests
+        run: npm run test:integration
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
