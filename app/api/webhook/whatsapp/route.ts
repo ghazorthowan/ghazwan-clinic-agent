@@ -7,7 +7,7 @@ import { verifySignature, normalizeInbound, newWindowExpiry, type MetaWebhookPay
 // ---------------------------------------------------------------------------
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = req.nextUrl;
+  const { searchParams } = new URL(req.url);
   const mode      = searchParams.get('hub.mode');
   const token     = searchParams.get('hub.verify_token');
   const challenge = searchParams.get('hub.challenge');
