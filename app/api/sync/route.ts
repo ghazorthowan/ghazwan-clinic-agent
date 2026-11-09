@@ -1,0 +1,2 @@
+import {NextResponse} from 'next/server';import {loggedIn} from '@/lib/auth';import {syncSheets} from '@/lib/sheets';
+export async function POST(){if(!await loggedIn())return NextResponse.json({error:'Unauthorized'},{status:401});try{return NextResponse.json(await syncSheets())}catch(e){console.error('Sheet sync failed:',e instanceof Error?e.message:'Unknown');return NextResponse.json({error:'Sheets synchronization failed; check server logs'},{status:500})}}
