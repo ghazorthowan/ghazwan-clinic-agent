@@ -27,7 +27,7 @@ export async function setupTestDb(label = 'db'): Promise<{ pool: Pool; teardown:
   const url = testDbUrl(dbName);
   const pool = new Pool({ connectionString: url, max: 5 });
 
-  for (const file of ['001_init.sql', '002_staff_auth.sql', '003_staff_lockout.sql', '004_audit_log.sql']) {
+  for (const file of ['001_init.sql', '002_staff_auth.sql', '003_staff_lockout.sql', '004_audit_log.sql', '005_whatsapp_webhook.sql']) {
     const sql = readFileSync(join(process.cwd(), 'db', file), 'utf8');
     await pool.query(sql);
   }
