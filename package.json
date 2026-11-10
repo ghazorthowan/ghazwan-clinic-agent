@@ -23,7 +23,6 @@
     "next": "16.4.5",
     "otplib": "^13.6.0",
     "pg": "^8.16.3",
-    "rate-limiter-flexible": "^11.4.0",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "zod": "^4.1.5"

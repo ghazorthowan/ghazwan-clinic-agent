@@ -1,14 +1,23 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { loggedIn } from '@/lib/auth';
 import { messageInput } from '@/lib/schema';
 import { pool } from '@/lib/db';
 import { generateResponse } from '@/lib/ai';
+import { mutationLimiter, checkRateLimit, getClientIp } from '@/lib/ratelimit';
 import type Anthropic from '@anthropic-ai/sdk';
 
 const SIM_CHANNEL = 'SIMULATED_WHATSAPP';
 
-export async function POST(req: Request) {
+export async function POST(req: NextRequest) {
   if (!await loggedIn()) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const { limited, retryAfter } = await checkRateLimit(mutationLimiter, `simulate:${getClientIp(req)}`);
+  if (limited) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(retryAfter) } },
+    );
+  }
 
   const parsed = messageInput.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: 'Invalid simulator input' }, { status: 400 });

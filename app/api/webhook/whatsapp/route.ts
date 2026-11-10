@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
 import { verifySignature, normalizeInbound, newWindowExpiry, type MetaWebhookPayload } from '@/lib/whatsapp';
+import { webhookLimiter, checkRateLimit, getClientIp } from '@/lib/ratelimit';
 
 // ---------------------------------------------------------------------------
 // Internal helper — calls /api/ai/respond for each conversation.
@@ -55,6 +56,15 @@ export async function GET(req: NextRequest) {
 const WA_CHANNEL = 'WA_01';
 
 export async function POST(req: NextRequest) {
+  const ip = getClientIp(req);
+  const { limited, retryAfter } = await checkRateLimit(webhookLimiter, `webhook:${ip}`);
+  if (limited) {
+    return NextResponse.json(
+      { error: 'Too many requests' },
+      { status: 429, headers: { 'Retry-After': String(retryAfter) } },
+    );
+  }
+
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   if (!appSecret) {
     return NextResponse.json({ error: 'Webhook not configured' }, { status: 503 });
