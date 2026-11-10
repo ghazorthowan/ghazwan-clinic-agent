@@ -44,8 +44,9 @@ export async function POST(req: NextRequest) {
     contact_id: string;
     status: string;
     window_expires_at: Date | null;
+    phone_number_id: string | null;
   }>(
-    `SELECT id, contact_id, status, window_expires_at FROM conversations WHERE id = $1`,
+    `SELECT id, contact_id, status, window_expires_at, phone_number_id FROM conversations WHERE id = $1`,
     [conversationId],
   );
   if (!convRow.rows.length) {
@@ -94,10 +95,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ skipped: 'empty_reply' });
   }
 
-  // Store the outbound reply
+  // Store the outbound reply — phone_number_id lets the outbox worker know which WA number to send from
   await pool.query(
-    `INSERT INTO messages (conversation_id, direction, body) VALUES ($1, 'OUT', $2)`,
-    [conversationId, aiResult.reply],
+    `INSERT INTO messages (conversation_id, direction, body, phone_number_id) VALUES ($1, 'OUT', $2, $3)`,
+    [conversationId, aiResult.reply, conv.phone_number_id],
   );
 
   return NextResponse.json({

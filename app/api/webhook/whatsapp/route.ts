@@ -94,12 +94,13 @@ export async function POST(req: NextRequest) {
         `, [msg.displayName, msg.fromPhone, WA_CHANNEL]);
         const contactId = contactResult.rows[0].id;
 
-        // Find or create conversation for this contact+channel
+        // Find or create conversation for this contact+channel, storing the phone_number_id
         await client.query(`
-          INSERT INTO conversations (contact_id, channel)
-          VALUES ($1, $2)
-          ON CONFLICT (contact_id, channel) DO NOTHING
-        `, [contactId, WA_CHANNEL]);
+          INSERT INTO conversations (contact_id, channel, phone_number_id)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (contact_id, channel)
+            DO UPDATE SET phone_number_id = EXCLUDED.phone_number_id
+        `, [contactId, WA_CHANNEL, msg.phoneNumberId]);
 
         const convResult = await client.query<{ id: string }>(`
           SELECT id FROM conversations WHERE contact_id = $1 AND channel = $2 LIMIT 1
