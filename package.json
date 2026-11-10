@@ -16,6 +16,7 @@
     "sheets:sync": "tsx scripts/sync-sheets.ts"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.7.0",
     "@types/bcryptjs": "^2.4.6",
     "bcryptjs": "^3.0.3",
     "googleapis": "^160.0.0",
