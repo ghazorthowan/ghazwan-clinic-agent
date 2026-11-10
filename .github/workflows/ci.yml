@@ -6,9 +6,61 @@ on:
   pull_request:
     branches: ["**"]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  test:
-    name: Test, typecheck, build
+  # ── 1. Security audit (fast, no DB needed) ───────────────────────────────
+  security:
+    name: Security audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Dependency vulnerability audit
+        # --audit-level=high fails only on high/critical CVEs
+        run: npm audit --audit-level=high
+
+  # ── 2. Unit tests + typecheck + build (no DB needed) ────────────────────
+  unit:
+    name: Unit tests, typecheck, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+        env:
+          # Build needs at least a placeholder — it won't run migrations
+          DATABASE_URL: postgresql://clinic:clinic_dev_only@localhost:5432/clinic_booking
+          STAFF_SESSION_SECRET: ci-build-secret-not-for-production
+
+  # ── 3. Integration tests (real Postgres) ────────────────────────────────
+  integration:
+    name: Integration tests
     runs-on: ubuntu-latest
 
     services:
@@ -46,14 +98,8 @@ jobs:
       - name: Run database migrations
         run: npm run db:migrate
 
-      - name: Unit tests
-        run: npm test
+      - name: Seed admin account
+        run: npm run db:seed-admin
 
       - name: Integration tests
         run: npm run test:integration
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build
-        run: npm run build
