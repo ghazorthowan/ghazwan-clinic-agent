@@ -8,6 +8,7 @@
 import { pool } from './db';
 import { clinicHours, isPastClinicDate } from './policy';
 import { transitionBooking } from './booking';
+import { auditAI } from './audit';
 import type Anthropic from '@anthropic-ai/sdk';
 
 // ---------------------------------------------------------------------------
@@ -89,6 +90,7 @@ export async function bookAppointment(
   `, [contactId, clinicDate]);
 
   const row = result.rows[0];
+  await auditAI('BOOKING_CREATED', 'booking', row.id, { contactId, clinicDate, bookingCode: row.booking_code });
   return { bookingId: row.id, bookingCode: row.booking_code, status: row.status };
 }
 
@@ -101,6 +103,7 @@ export async function cancelBooking(
   idempotencyKey: string,
 ): Promise<{ success: boolean; status: string }> {
   const result = await transitionBooking(bookingId, 'CANCEL', idempotencyKey);
+  await auditAI('BOOKING_CANCELLED', 'booking', bookingId, { idempotencyKey, status: result.status });
   return { success: true, status: result.status };
 }
 
@@ -113,6 +116,7 @@ export async function escalateToHuman(conversationId: string): Promise<{ escalat
     `UPDATE conversations SET status = 'HUMAN' WHERE id = $1`,
     [conversationId],
   );
+  await auditAI('CONVERSATION_ESCALATED', 'conversation', conversationId);
   return { escalated: true };
 }
 
