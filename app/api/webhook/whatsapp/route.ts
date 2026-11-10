@@ -3,6 +3,30 @@ import { pool } from '@/lib/db';
 import { verifySignature, normalizeInbound, newWindowExpiry, type MetaWebhookPayload } from '@/lib/whatsapp';
 
 // ---------------------------------------------------------------------------
+// Internal helper — calls /api/ai/respond for each conversation.
+// Fire-and-forget: errors are logged but never bubble up to the webhook caller.
+// ---------------------------------------------------------------------------
+
+function triggerAIRespond(req: NextRequest, conversationIds: string[]): void {
+  if (!conversationIds.length) return;
+
+  const base = new URL(req.url).origin;
+  const secret = process.env.INTERNAL_API_SECRET;
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (secret) headers['x-internal-secret'] = secret;
+
+  for (const conversationId of conversationIds) {
+    fetch(`${base}/api/ai/respond`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ conversationId }),
+    }).catch((err: unknown) => {
+      console.error(`AI respond error for conversation ${conversationId}:`, err);
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // GET — Meta webhook verification challenge
 // ---------------------------------------------------------------------------
 
@@ -52,6 +76,8 @@ export async function POST(req: NextRequest) {
 
   const messages = normalizeInbound(payload);
 
+  const conversationIds: string[] = [];
+
   if (messages.length > 0) {
     const client = await pool.connect();
     try {
@@ -94,6 +120,8 @@ export async function POST(req: NextRequest) {
           ON CONFLICT (provider_message_id) WHERE provider_message_id IS NOT NULL
           DO NOTHING
         `, [conversationId, msg.body, msg.providerMessageId, msg.providerTimestamp]);
+
+        conversationIds.push(conversationId);
       }
 
       await client.query('COMMIT');
@@ -105,6 +133,10 @@ export async function POST(req: NextRequest) {
       client.release();
     }
   }
+
+  // Fire-and-forget: trigger AI response for each conversation after the
+  // transaction commits. Done outside the transaction so Meta gets 200 fast.
+  triggerAIRespond(req, conversationIds);
 
   // Meta expects 200 OK quickly; never return an error for delivery status updates
   return NextResponse.json({ status: 'ok' });
