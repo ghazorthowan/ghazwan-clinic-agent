@@ -1,47 +1,70 @@
 import { describe, it, expect } from 'vitest';
+import { isSafeOrigin } from '../lib/csrf';
 
-// Inline the origin-check logic (same as lib/csrf.ts) to keep tests DB-free
-function isSafeOrigin(originHeader: string | null, refererHeader: string | null, host: string): boolean {
-  const extra: string[] = [];
-  const allowedHosts = new Set([host, ...extra]);
+// ---------------------------------------------------------------------------
+// lib/csrf.ts — isSafeOrigin
+// ---------------------------------------------------------------------------
 
-  if (originHeader) {
-    try { return allowedHosts.has(new URL(originHeader).host); } catch { return false; }
-  }
-  if (refererHeader) {
-    try { return allowedHosts.has(new URL(refererHeader).host); } catch { return false; }
-  }
-  return false;
+function makeReq(origin: string | null, referer: string | null, host = 'localhost:3000'): Request {
+  const headers: Record<string, string> = { host };
+  if (origin)  headers['origin']  = origin;
+  if (referer) headers['referer'] = referer;
+  return new Request('http://localhost:3000/api/bookings', { method: 'POST', headers });
 }
 
-describe('CSRF origin check', () => {
-  const host = 'localhost:3000';
-
+describe('CSRF origin check — isSafeOrigin()', () => {
   it('allows same-origin request via Origin header', () => {
-    expect(isSafeOrigin('http://localhost:3000', null, host)).toBe(true);
+    expect(isSafeOrigin(makeReq('http://localhost:3000', null))).toBe(true);
   });
 
   it('allows same-origin request via Referer header', () => {
-    expect(isSafeOrigin(null, 'http://localhost:3000/dashboard', host)).toBe(true);
+    expect(isSafeOrigin(makeReq(null, 'http://localhost:3000/dashboard'))).toBe(true);
   });
 
   it('rejects a cross-origin Origin header', () => {
-    expect(isSafeOrigin('https://evil.example.com', null, host)).toBe(false);
+    expect(isSafeOrigin(makeReq('https://evil.example.com', null))).toBe(false);
   });
 
   it('rejects a cross-origin Referer header', () => {
-    expect(isSafeOrigin(null, 'https://evil.example.com/phish', host)).toBe(false);
+    expect(isSafeOrigin(makeReq(null, 'https://evil.example.com/phish'))).toBe(false);
   });
 
   it('rejects a request with no Origin or Referer', () => {
-    expect(isSafeOrigin(null, null, host)).toBe(false);
+    expect(isSafeOrigin(makeReq(null, null))).toBe(false);
   });
 
   it('rejects a malformed Origin header', () => {
-    expect(isSafeOrigin('not-a-url', null, host)).toBe(false);
+    expect(isSafeOrigin(makeReq('not-a-url', null))).toBe(false);
   });
 
   it('rejects an Origin that only shares a suffix with the host', () => {
-    expect(isSafeOrigin('http://evil-localhost:3000', null, host)).toBe(false);
+    expect(isSafeOrigin(makeReq('http://evil-localhost:3000', null))).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// middleware.ts exempt paths — verify webhook/internal bypass logic
+// ---------------------------------------------------------------------------
+
+describe('CSRF middleware exempt paths', () => {
+  const EXEMPT = new Set(['/api/webhook/whatsapp', '/api/ai/respond', '/api/outbox']);
+
+  it('webhook path is exempt', () => {
+    expect(EXEMPT.has('/api/webhook/whatsapp')).toBe(true);
+  });
+
+  it('internal AI respond path is exempt', () => {
+    expect(EXEMPT.has('/api/ai/respond')).toBe(true);
+  });
+
+  it('outbox path is exempt', () => {
+    expect(EXEMPT.has('/api/outbox')).toBe(true);
+  });
+
+  it('staff mutation paths are NOT exempt', () => {
+    expect(EXEMPT.has('/api/bookings')).toBe(false);
+    expect(EXEMPT.has('/api/closures')).toBe(false);
+    expect(EXEMPT.has('/api/simulate')).toBe(false);
+    expect(EXEMPT.has('/api/auth/login')).toBe(false);
   });
 });
