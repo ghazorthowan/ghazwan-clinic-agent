@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession, startSession, updateLastLogin, verifyTotp } from '@/lib/auth';
+import { audit } from '@/lib/audit';
 import { pool } from '@/lib/db';
 import { authLimiter, checkRateLimit, getClientIp } from '@/lib/ratelimit';
 
@@ -39,6 +40,7 @@ export async function POST(req: Request) {
 
     await startSession({ staffId: session.staffId, role: session.role, mfaVerified: true });
     await updateLastLogin(session.staffId);
+    void audit({ actorType: 'STAFF', actorId: session.staffId, action: 'MFA_VERIFIED', entityType: 'staff_user', entityId: session.staffId });
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Server error' }, { status: 500 });

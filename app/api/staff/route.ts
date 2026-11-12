@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { getSession, createStaffUser } from '@/lib/auth';
+import { audit } from '@/lib/audit';
 import { pool } from '@/lib/db';
 import { z } from 'zod';
 
@@ -32,6 +33,7 @@ export async function POST(req: Request) {
 
   try {
     const id = await createStaffUser(parsed.data.email, parsed.data.password, parsed.data.role);
+    void audit({ actorType: 'STAFF', actorId: session.staffId, action: 'STAFF_CREATED', entityType: 'staff_user', entityId: id, detail: { email: parsed.data.email, role: parsed.data.role } });
     return NextResponse.json({ id }, { status: 201 });
   } catch (e) {
     const msg = (e as Error).message ?? '';

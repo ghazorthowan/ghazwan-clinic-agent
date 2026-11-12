@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { findStaffByEmail, verifyStaffPassword, startSession, updateLastLogin } from '@/lib/auth';
+import { audit } from '@/lib/audit';
 import { pool } from '@/lib/db';
 import { authLimiter, checkRateLimit, getClientIp } from '@/lib/ratelimit';
 
@@ -72,6 +73,7 @@ export async function POST(req: Request) {
 
     await startSession({ staffId: user.id, role: user.role as 'ADMIN' | 'RECEPTIONIST', mfaVerified: true });
     await updateLastLogin(user.id);
+    void audit({ actorType: 'STAFF', actorId: user.id, action: 'LOGIN', entityType: 'staff_user', entityId: user.id });
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: 'Server error' }, { status: 500 });
