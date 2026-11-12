@@ -14,6 +14,7 @@ const CSRF_EXEMPT = new Set<string>([
   '/api/webhook/whatsapp',
   '/api/ai/respond',
   '/api/outbox',
+  '/api/sync/cron',
 ]);
 
 export function middleware(req: NextRequest) {

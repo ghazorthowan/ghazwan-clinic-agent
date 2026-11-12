@@ -1,6 +1,7 @@
 import { google } from 'googleapis';
 import { Pool } from 'pg';
 import { pool } from './db';
+import { audit } from './audit';
 
 const HEADERS = ['Booking_ID','Created_At','Patient_Name','Contact_Phone','Respond_Contact_ID','Source_Channel','Source_Conversation_ID','Visit_Date','Clinic_Hours','Booking_Status','Patient_Confirmed_At','Reminder_Status','Message_Consent','Assigned_Secretary','Arrival_Time','Arrival_Sequence','Attendance_Status','Last_Updated_At','Last_Action_ID','Admin_Note'];
 
@@ -105,7 +106,8 @@ export async function syncSheets(db: Pool = pool): Promise<{ synced: number; ski
   const { sheets, id, tab } = config;
   const hours = (await import('./policy')).clinicHours;
 
-  return drainOutbox(async (rows) => {
+  try {
+    return await drainOutbox(async (rows) => {
     const values = [
       HEADERS,
       ...rows.map(r => [
@@ -136,5 +138,19 @@ export async function syncSheets(db: Pool = pool): Promise<{ synced: number; ski
       valueInputOption: 'RAW',
       requestBody: { values },
     });
-  }, db);
+    }, db);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('[sheets-sync] FAILED:', message);
+    // Fire-and-forget audit entry — never let alerting break the caller.
+    void audit({
+      actorType: 'SYSTEM',
+      actorId: null,
+      action: 'SHEETS_SYNC_FAILED',
+      entityType: 'sync',
+      entityId: 'sheets',
+      detail: { error: message, sheetId: id },
+    });
+    throw err;
+  }
 }
