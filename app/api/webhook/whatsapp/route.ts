@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
-import { verifySignature, normalizeInbound, normalizeStatuses, newWindowExpiry, type MetaWebhookPayload } from '@/lib/whatsapp';
+import { verifySignature, normalizeInbound, normalizeStatuses, newWindowExpiry, channelFromPhoneNumberId, type MetaWebhookPayload } from '@/lib/whatsapp';
 import { webhookLimiter, checkRateLimit, getClientIp } from '@/lib/ratelimit';
 
 // ---------------------------------------------------------------------------
@@ -53,8 +53,6 @@ export async function GET(req: NextRequest) {
 // POST — inbound messages
 // ---------------------------------------------------------------------------
 
-const WA_CHANNEL = 'WA_01';
-
 export async function POST(req: NextRequest) {
   const ip = getClientIp(req);
   const { limited, retryAfter } = await checkRateLimit(webhookLimiter, `webhook:${ip}`);
@@ -95,6 +93,8 @@ export async function POST(req: NextRequest) {
       await client.query('BEGIN');
 
       for (const msg of messages) {
+        const channel = channelFromPhoneNumberId(msg.phoneNumberId);
+
         // Upsert contact — keyed by (source_channel, external_contact_ref)
         const contactResult = await client.query<{ id: string }>(`
           INSERT INTO contacts (display_name, phone, source_channel, external_contact_ref)
@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
           ON CONFLICT (source_channel, external_contact_ref)
             DO UPDATE SET display_name = EXCLUDED.display_name
           RETURNING id
-        `, [msg.displayName, msg.fromPhone, WA_CHANNEL]);
+        `, [msg.displayName, msg.fromPhone, channel]);
         const contactId = contactResult.rows[0].id;
 
         // Find or create conversation for this contact+channel, storing the phone_number_id
@@ -111,11 +111,11 @@ export async function POST(req: NextRequest) {
           VALUES ($1, $2, $3)
           ON CONFLICT (contact_id, channel)
             DO UPDATE SET phone_number_id = EXCLUDED.phone_number_id
-        `, [contactId, WA_CHANNEL, msg.phoneNumberId]);
+        `, [contactId, channel, msg.phoneNumberId]);
 
         const convResult = await client.query<{ id: string }>(`
           SELECT id FROM conversations WHERE contact_id = $1 AND channel = $2 LIMIT 1
-        `, [contactId, WA_CHANNEL]);
+        `, [contactId, channel]);
         const conversationId = convResult.rows[0].id;
 
         // Update the 24-hour messaging window

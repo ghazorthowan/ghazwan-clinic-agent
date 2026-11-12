@@ -6,12 +6,15 @@ const MUTATION_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 /**
  * Paths exempt from the CSRF origin check.
  *
- * - /api/webhook/whatsapp  — Meta sends no Origin; verified by X-Hub-Signature-256 instead
- * - /api/ai/respond        — internal only; verified by x-internal-secret
- * - /api/outbox            — internal only; verified by x-internal-secret
+ * Webhook endpoints: verified by provider signature (HMAC-SHA256)
+ * Internal endpoints: verified by x-internal-secret
+ * Widget: has its own strict Origin enforcement + CORS headers
  */
 const CSRF_EXEMPT = new Set<string>([
   '/api/webhook/whatsapp',
+  '/api/webhook/meta',
+  '/api/webhook/tiktok',
+  '/api/widget/chat',   // own Origin enforcement + CORS
   '/api/ai/respond',
   '/api/outbox',
   '/api/sync/cron',

@@ -133,6 +133,30 @@ export function normalizeStatuses(payload: MetaWebhookPayload): NormalizedStatus
 }
 
 // ---------------------------------------------------------------------------
+// Multi-number WhatsApp: map phone_number_id → channel name
+// ---------------------------------------------------------------------------
+
+/**
+ * Derive the source_channel value for a WhatsApp phone_number_id.
+ *
+ * Configure via WA_PHONE_CHANNEL_MAP (JSON):
+ *   WA_PHONE_CHANNEL_MAP='{"123456":"WA_01","789012":"WA_02"}'
+ *
+ * Falls back to 'WA_01' when no mapping is found.
+ */
+export function channelFromPhoneNumberId(phoneNumberId: string): 'WA_01' | 'WA_02' | 'WA_03' {
+  const mapStr = process.env.WA_PHONE_CHANNEL_MAP;
+  if (mapStr) {
+    try {
+      const map = JSON.parse(mapStr) as Record<string, string>;
+      const ch = map[phoneNumberId];
+      if (ch === 'WA_01' || ch === 'WA_02' || ch === 'WA_03') return ch;
+    } catch { /* malformed env var — fall through */ }
+  }
+  return 'WA_01';
+}
+
+// ---------------------------------------------------------------------------
 // 24-hour messaging window
 // ---------------------------------------------------------------------------
 
