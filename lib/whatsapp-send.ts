@@ -9,6 +9,8 @@
  * Production sends require WHATSAPP_ENABLED=true in the environment.
  */
 
+import type { TemplateMessage } from './templates';
+
 export interface SendResult {
   providerMessageId: string | null;
   simulated: boolean;
@@ -55,6 +57,52 @@ export async function sendWhatsAppMessage(
       to: toPhone.replace(/^\+/, ''),
       type: 'text',
       text: { body },
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new SendError(`Meta API ${res.status}: ${text}`, res.status);
+  }
+
+  const data = await res.json() as { messages?: Array<{ id: string }> };
+  const providerMessageId = data.messages?.[0]?.id ?? null;
+  return { providerMessageId, simulated: false };
+}
+
+/**
+ * Send an approved utility template message via the Meta Cloud API.
+ * Used when the 24-hour free-form messaging window has expired.
+ * Same safety gate as sendWhatsAppMessage.
+ */
+export async function sendWhatsAppTemplate(
+  phoneNumberId: string,
+  toPhone: string,
+  template: TemplateMessage,
+): Promise<SendResult> {
+  const token = process.env.WHATSAPP_TOKEN;
+  const enabled = process.env.WHATSAPP_ENABLED === 'true';
+
+  if (!token || !enabled) {
+    return { providerMessageId: null, simulated: true };
+  }
+
+  const url = `https://graph.facebook.com/v19.0/${phoneNumberId}/messages`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      messaging_product: 'whatsapp',
+      to: toPhone.replace(/^\+/, ''),
+      type: 'template',
+      template: {
+        name: template.templateName,
+        language: { code: template.languageCode },
+        components: template.components,
+      },
     }),
   });
 

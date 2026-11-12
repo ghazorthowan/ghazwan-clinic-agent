@@ -96,6 +96,7 @@ jobs:
         run: npm ci
 
       - name: Run database migrations
+        # db:migrate runs all files in db/ — adding new migrations here is not needed
         run: npm run db:migrate
 
       - name: Seed admin account

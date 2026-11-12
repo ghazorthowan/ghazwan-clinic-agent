@@ -105,6 +105,34 @@ export function normalizeInbound(payload: MetaWebhookPayload): NormalizedInbound
 }
 
 // ---------------------------------------------------------------------------
+// Delivery status normalization
+// ---------------------------------------------------------------------------
+
+export interface NormalizedStatus {
+  id: string;        // provider_message_id of the outbound message
+  status: string;    // 'sent' | 'delivered' | 'read' | 'failed'
+  timestamp: string; // unix seconds as string
+}
+
+/**
+ * Extract delivery/read status updates from a Meta webhook payload.
+ * These are informational — they never create new messages.
+ */
+export function normalizeStatuses(payload: MetaWebhookPayload): NormalizedStatus[] {
+  if (payload.object !== 'whatsapp_business_account') return [];
+  const results: NormalizedStatus[] = [];
+  for (const entry of payload.entry) {
+    for (const change of entry.changes) {
+      if (change.field !== 'messages') continue;
+      for (const s of change.value.statuses ?? []) {
+        results.push({ id: s.id, status: s.status, timestamp: s.timestamp });
+      }
+    }
+  }
+  return results;
+}
+
+// ---------------------------------------------------------------------------
 // 24-hour messaging window
 // ---------------------------------------------------------------------------
 

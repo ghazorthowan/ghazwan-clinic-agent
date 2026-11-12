@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { pool } from '@/lib/db';
-import { verifySignature, normalizeInbound, newWindowExpiry, type MetaWebhookPayload } from '@/lib/whatsapp';
+import { verifySignature, normalizeInbound, normalizeStatuses, newWindowExpiry, type MetaWebhookPayload } from '@/lib/whatsapp';
 import { webhookLimiter, checkRateLimit, getClientIp } from '@/lib/ratelimit';
 
 // ---------------------------------------------------------------------------
@@ -85,10 +85,11 @@ export async function POST(req: NextRequest) {
   }
 
   const messages = normalizeInbound(payload);
+  const statuses = normalizeStatuses(payload);
 
   const conversationIds: string[] = [];
 
-  if (messages.length > 0) {
+  if (messages.length > 0 || statuses.length > 0) {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -133,6 +134,17 @@ export async function POST(req: NextRequest) {
         `, [conversationId, msg.body, msg.providerMessageId, msg.providerTimestamp]);
 
         conversationIds.push(conversationId);
+      }
+
+      // Mark outbound messages as delivered — informational, never blocks inbound processing.
+      for (const s of statuses) {
+        if (s.status === 'delivered' || s.status === 'read') {
+          await client.query(
+            `UPDATE messages SET delivered_at = $1
+             WHERE provider_message_id = $2 AND delivered_at IS NULL`,
+            [new Date(Number(s.timestamp) * 1000), s.id],
+          );
+        }
       }
 
       await client.query('COMMIT');
