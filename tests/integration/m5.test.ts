@@ -5,49 +5,53 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { Pool } from 'pg';
 import { setupTestDb } from '../helpers/db';
-import {
-  hasConsent,
-  recordConsent,
-  eraseContactData,
-  PRIVACY_NOTICE,
-  ERASURE_CONFIRMATION,
-} from '../../lib/consent';
 
 let pool: Pool;
 let teardown: () => Promise<void>;
 
-// Seed a contact for use across tests
+let hasConsentFn: (contactId: string) => Promise<boolean>;
+let recordConsentFn: (contactId: string, channel: string) => Promise<void>;
+let eraseContactDataFn: (contactId: string) => Promise<void>;
+let PRIVACY_NOTICE: string;
+let ERASURE_CONFIRMATION: string;
+
 let contactId: string;
 
 beforeAll(async () => {
   ({ pool, teardown } = await setupTestDb('m5'));
 
-  // Insert a staff user (required for FK on conversations)
-  await pool.query(`
-    INSERT INTO staff_users (id, email, password_hash, role)
-    VALUES (gen_random_uuid(), 'staff@test.com', 'x', 'ADMIN')
-  `);
+  // Point lib/db.ts pool at the test DB (must happen before any module imports)
+  process.env.DATABASE_URL = pool.options.connectionString as string;
+
+  const consent = await import('../../lib/consent');
+  hasConsentFn = consent.hasConsent;
+  recordConsentFn = consent.recordConsent;
+  eraseContactDataFn = consent.eraseContactData;
+  PRIVACY_NOTICE = consent.PRIVACY_NOTICE;
+  ERASURE_CONFIRMATION = consent.ERASURE_CONFIRMATION;
 
   // Insert a contact with no consent
   const r = await pool.query<{ id: string }>(`
-    INSERT INTO contacts (phone, display_name, channel)
-    VALUES ('+9647001000001', 'Test Patient', 'WA_01')
+    INSERT INTO contacts (phone, display_name, source_channel, external_contact_ref)
+    VALUES ('+9647001000001', 'Test Patient', 'WA_01', 'test-ref-001')
     RETURNING id
   `);
   contactId = r.rows[0].id;
-});
+}, 30_000);
 
-afterAll(() => teardown());
+afterAll(async () => {
+  await teardown();
+}, 15_000);
 
 // ── hasConsent ──────────────────────────────────────────────────────────────
 
 describe('hasConsent', () => {
   it('returns false before consent is recorded', async () => {
-    expect(await hasConsent(contactId)).toBe(false);
+    expect(await hasConsentFn(contactId)).toBe(false);
   });
 
   it('returns false for unknown contactId', async () => {
-    expect(await hasConsent('00000000-0000-0000-0000-000000000000')).toBe(false);
+    expect(await hasConsentFn('00000000-0000-0000-0000-000000000000')).toBe(false);
   });
 });
 
@@ -55,12 +59,12 @@ describe('hasConsent', () => {
 
 describe('recordConsent', () => {
   it('sets consent_given_at', async () => {
-    await recordConsent(contactId, 'WA_01');
-    expect(await hasConsent(contactId)).toBe(true);
+    await recordConsentFn(contactId, 'WA_01');
+    expect(await hasConsentFn(contactId)).toBe(true);
   });
 
   it('is idempotent — calling again does not throw', async () => {
-    await expect(recordConsent(contactId, 'WA_01')).resolves.toBeUndefined();
+    await expect(recordConsentFn(contactId, 'WA_01')).resolves.toBeUndefined();
   });
 
   it('stores channel in consent_ip column', async () => {
@@ -78,17 +82,16 @@ describe('eraseContactData', () => {
   let eraseId: string;
 
   beforeAll(async () => {
-    // Create a separate contact to erase so other tests are unaffected
     const r = await pool.query<{ id: string }>(`
-      INSERT INTO contacts (phone, display_name, channel, consent_given_at)
-      VALUES ('+9647001000002', 'Erase Me', 'WA_01', now())
+      INSERT INTO contacts (phone, display_name, source_channel, external_contact_ref, consent_given_at)
+      VALUES ('+9647001000002', 'Erase Me', 'WA_01', 'test-ref-002', now())
       RETURNING id
     `);
     eraseId = r.rows[0].id;
   });
 
   it('soft-erases PII fields', async () => {
-    await eraseContactData(eraseId);
+    await eraseContactDataFn(eraseId);
 
     const r = await pool.query(
       'SELECT phone, display_name, consent_given_at, data_deleted_at FROM contacts WHERE id = $1',
@@ -102,11 +105,11 @@ describe('eraseContactData', () => {
   });
 
   it('hasConsent returns false after erasure', async () => {
-    expect(await hasConsent(eraseId)).toBe(false);
+    expect(await hasConsentFn(eraseId)).toBe(false);
   });
 
   it('is idempotent — second call does not throw', async () => {
-    await expect(eraseContactData(eraseId)).resolves.toBeUndefined();
+    await expect(eraseContactDataFn(eraseId)).resolves.toBeUndefined();
   });
 });
 
@@ -156,14 +159,9 @@ describe('schema_migrations', () => {
 
 describe('GET /api/health', () => {
   it('returns 200 with schema version when DB is up', async () => {
-    // We test the handler directly by importing and calling it in-process.
-    // The route queries the real DB via the pool module; we patch DATABASE_URL
-    // to point at our test DB.
-    process.env.DATABASE_URL = process.env.TEST_DB_NAME
-      ? `postgresql://clinic:clinic_dev_only@localhost:5432/${process.env.TEST_DB_NAME}`
-      : process.env.DATABASE_URL;
-
-    // Lazy import so the pool picks up the patched env
+    // DATABASE_URL already points at the test DB (set in beforeAll above).
+    // The pool module is cached on globalThis — force a fresh import by
+    // querying the route's pool directly via the already-imported pool.
     const { GET } = await import('../../app/api/health/route');
     const res = await GET();
     const body = await res.json();
