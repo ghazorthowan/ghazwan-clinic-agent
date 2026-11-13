@@ -14,9 +14,19 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
-import { AI_TOOLS, dispatchTool } from './ai-tools';
+import { AI_TOOLS, dispatchTool, escalateToHuman } from './ai-tools';
 import { checkEmergency } from './emergency';
-import { escalateToHuman } from './ai-tools';
+import {
+  hasConsent,
+  recordConsent,
+  isConsentAcknowledgment,
+  isDeletionRequest,
+  eraseContactData,
+  PRIVACY_NOTICE,
+  ERASURE_CONFIRMATION,
+} from './consent';
+import { pool } from './db';
+import { audit } from './audit';
 
 const MODEL = 'claude-opus-5-5';
 
@@ -76,16 +86,60 @@ export async function generateResponse(
   contactId: string,
   conversationId: string,
 ): Promise<AIResponse> {
-  // Emergency guard: check the latest user message BEFORE calling the AI.
-  // If an emergency keyword is detected, escalate immediately with a fixed
-  // clinician-approved reply — the AI never runs for these messages.
-  const lastUserMessage = conversationHistory
-    .slice().reverse()
+  // ── Consent + right-to-forget gate ──────────────────────────────────────
+  // Runs before the emergency check and before the AI.
+  // CLAUDE.md rule 1: privacy disclosure required before processing data.
+  // CLAUDE.md rule 4: explicit consent only — no passive assumption.
+
+  const latestUserMsg = conversationHistory
+    .slice()
+    .reverse()
     .find(m => m.role === 'user');
-  const lastText = typeof lastUserMessage?.content === 'string'
-    ? lastUserMessage.content
+  const latestText = typeof latestUserMsg?.content === 'string'
+    ? latestUserMsg.content
     : '';
-  const emergencyCheck = checkEmergency(lastText);
+
+  // Right-to-forget: patient requests data erasure
+  if (isDeletionRequest(latestText)) {
+    await eraseContactData(contactId);
+    void audit({
+      actorType: 'SYSTEM',
+      action: 'DATA_ERASED',
+      entityType: 'contact',
+      entityId: contactId,
+      detail: { source: 'ai_respond' },
+    });
+    return { reply: ERASURE_CONFIRMATION, toolsUsed: [], escalated: false, tokensUsed: 0 };
+  }
+
+  const consentGranted = await hasConsent(contactId);
+
+  if (!consentGranted) {
+    // Check if the latest message IS a consent acknowledgment
+    if (isConsentAcknowledgment(latestText)) {
+      // Derive channel from conversations table for audit trail
+      const convRow = await pool.query<{ channel: string }>(
+        `SELECT channel FROM conversations WHERE id = $1`,
+        [conversationId],
+      );
+      const channel = convRow.rows[0]?.channel ?? 'unknown';
+      await recordConsent(contactId, channel);
+      void audit({
+        actorType: 'SYSTEM',
+        action: 'CONSENT_RECORDED',
+        entityType: 'contact',
+        entityId: contactId,
+        detail: { channel, source: 'ai_respond' },
+      });
+      // Fall through — now run the AI on this confirmation message
+    } else {
+      // No consent yet and message is not an acknowledgment — send privacy notice
+      return { reply: PRIVACY_NOTICE, toolsUsed: [], escalated: false, tokensUsed: 0 };
+    }
+  }
+
+  // ── Emergency guard ──────────────────────────────────────────────────────
+  const emergencyCheck = checkEmergency(latestText);
   if (emergencyCheck.isEmergency) {
     await escalateToHuman(conversationId);
     return {
