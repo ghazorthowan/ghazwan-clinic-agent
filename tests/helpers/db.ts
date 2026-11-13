@@ -38,6 +38,7 @@ export async function setupTestDb(label = 'db'): Promise<{ pool: Pool; teardown:
     '008_rate_limit.sql',
     '009_delivery_status.sql',
     '010_m3_channels.sql',
+    '011_faq.sql',
   ]) {
     const sql = readFileSync(join(process.cwd(), 'db', file), 'utf8');
     await pool.query(sql);

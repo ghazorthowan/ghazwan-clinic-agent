@@ -9,6 +9,7 @@ import { pool } from './db';
 import { clinicHours, isPastClinicDate } from './policy';
 import { transitionBooking } from './booking';
 import { auditAI } from './audit';
+import { searchFaq } from './faq';
 import type Anthropic from '@anthropic-ai/sdk';
 
 // ---------------------------------------------------------------------------
@@ -124,6 +125,9 @@ export async function escalateToHuman(conversationId: string): Promise<{ escalat
 // Tool definitions for the Claude API (allow-list)
 // ---------------------------------------------------------------------------
 
+// Re-export so callers can use the type without importing faq.ts directly
+export type { FaqEntry } from './faq';
+
 export const AI_TOOLS: Anthropic.Tool[] = [
   {
     name: 'clinic_day_info',
@@ -189,6 +193,26 @@ export const AI_TOOLS: Anthropic.Tool[] = [
     strict: true,
   },
   {
+    name: 'search_faq',
+    description:
+      'Search physician-approved administrative FAQs for answers to common questions about ' +
+      'clinic hours, booking process, cancellation, fees, location, and services. ' +
+      'Call this BEFORE answering any general question about the clinic to retrieve the approved wording. ' +
+      'Do NOT use this for medical or clinical questions — escalate those instead.',
+    input_schema: {
+      type: 'object' as const,
+      properties: {
+        query: {
+          type: 'string',
+          description: 'The patient\'s question or key terms to search for (Arabic or English).',
+        },
+      },
+      required: ['query'],
+      additionalProperties: false,
+    },
+    strict: true,
+  },
+  {
     name: 'escalate_to_human',
     description:
       'Hand the conversation off to a human staff member. ' +
@@ -226,6 +250,9 @@ export async function dispatchTool(
 
     case 'cancel_booking':
       return cancelBooking(input.booking_id as string, input.idempotency_key as string);
+
+    case 'search_faq':
+      return searchFaq(input.query as string);
 
     case 'escalate_to_human':
       return escalateToHuman((input.conversation_id as string));

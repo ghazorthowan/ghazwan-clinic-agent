@@ -15,6 +15,8 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import { AI_TOOLS, dispatchTool } from './ai-tools';
+import { checkEmergency } from './emergency';
+import { escalateToHuman } from './ai-tools';
 
 const MODEL = 'claude-opus-5-5';
 
@@ -74,6 +76,26 @@ export async function generateResponse(
   contactId: string,
   conversationId: string,
 ): Promise<AIResponse> {
+  // Emergency guard: check the latest user message BEFORE calling the AI.
+  // If an emergency keyword is detected, escalate immediately with a fixed
+  // clinician-approved reply — the AI never runs for these messages.
+  const lastUserMessage = conversationHistory
+    .slice().reverse()
+    .find(m => m.role === 'user');
+  const lastText = typeof lastUserMessage?.content === 'string'
+    ? lastUserMessage.content
+    : '';
+  const emergencyCheck = checkEmergency(lastText);
+  if (emergencyCheck.isEmergency) {
+    await escalateToHuman(conversationId);
+    return {
+      reply: emergencyCheck.fixedReply,
+      toolsUsed: ['escalate_to_human'],
+      escalated: true,
+      tokensUsed: 0,
+    };
+  }
+
   const client = new Anthropic();
 
   const messages: Anthropic.MessageParam[] = [
