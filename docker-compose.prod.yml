@@ -2,12 +2,13 @@
 #
 # Usage:
 #   cp .env.example .env.prod
-#   # Fill in all secrets in .env.prod
+#   # Fill in all secrets in .env.prod, including DOMAIN=your-clinic.com
 #   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
 #
-# The app container runs db migrations automatically on start.
-# /api/health is used for the healthcheck — wait until it returns 200 before
-# routing traffic.
+# Stack: Caddy (HTTPS) → Next.js app → PostgreSQL
+# Caddy obtains and renews TLS certificates automatically via Let's Encrypt.
+# Prerequisite: DNS A record for $DOMAIN must point to this server's IP,
+# and ports 80 + 443 must be open in your firewall.
 
 services:
 
@@ -82,12 +83,9 @@ services:
       # Claude AI
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
 
-    ports:
-      # Expose only on localhost — put Caddy/Nginx in front for HTTPS
-      - "127.0.0.1:3000:3000"
+    # app is NOT exposed to the host — Caddy proxies to it over the internal network
     networks:
       - internal
-      - external
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 15s
@@ -95,13 +93,41 @@ services:
       start_period: 45s
       retries: 5
 
+  # ── Caddy (automatic HTTPS) ──────────────────────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"      # HTTP → redirects to HTTPS automatically
+      - "443:443"    # HTTPS
+      - "443:443/udp" # HTTP/3
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data          # TLS certificates (persisted across restarts)
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+    environment:
+      DOMAIN: ${DOMAIN}
+    networks:
+      - internal
+      - external
+
 networks:
   internal:
     driver: bridge
-    internal: true      # postgres is unreachable from outside
+    internal: true      # postgres + app unreachable from outside; only Caddy faces internet
   external:
     driver: bridge
 
 volumes:
   clinic_pg_data:
+    driver: local
+  caddy_data:
+    driver: local
+  caddy_config:
+    driver: local
+  caddy_logs:
     driver: local

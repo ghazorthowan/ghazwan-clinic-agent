@@ -1,0 +1,57 @@
+# Caddy reverse proxy with automatic HTTPS (Let's Encrypt / ZeroSSL).
+#
+# Replace {$DOMAIN} with your real domain, or set DOMAIN in .env.prod.
+# Caddy will obtain and renew TLS certificates automatically — no certbot needed.
+#
+# Requirements:
+#   - DNS A record for your domain pointing to this server's IP
+#   - Ports 80 and 443 open in your firewall / security group
+
+{$DOMAIN} {
+    # Reverse proxy all traffic to the Next.js app
+    reverse_proxy app:3000
+
+    # Security headers
+    header {
+        # Prevent clickjacking
+        X-Frame-Options "SAMEORIGIN"
+        # Prevent MIME-type sniffing
+        X-Content-Type-Options "nosniff"
+        # Enforce HTTPS for 1 year (includeSubDomains)
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        # Basic XSS protection
+        X-XSS-Protection "1; mode=block"
+        # Referrer policy
+        Referrer-Policy "strict-origin-when-cross-origin"
+        # Remove server fingerprint
+        -Server
+    }
+
+    # Health check endpoint — no access log noise
+    @health path /api/health
+    handle @health {
+        reverse_proxy app:3000
+        log_skip
+    }
+
+    # Webhook endpoints — allow large payloads (Meta sends base64 media)
+    @webhooks path /api/webhook/*
+    handle @webhooks {
+        reverse_proxy app:3000 {
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Real-IP {remote_host}
+        }
+    }
+
+    # Compress responses
+    encode gzip
+
+    # Access log
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 50mb
+            roll_keep 7
+        }
+        format json
+    }
+}
