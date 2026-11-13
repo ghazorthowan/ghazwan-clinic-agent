@@ -1,0 +1,107 @@
+# Production Docker Compose
+#
+# Usage:
+#   cp .env.example .env.prod
+#   # Fill in all secrets in .env.prod
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# The app container runs db migrations automatically on start.
+# /api/health is used for the healthcheck — wait until it returns 200 before
+# routing traffic.
+
+services:
+
+  # ── PostgreSQL 17 ───────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-clinic}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-clinic_booking}
+    volumes:
+      - clinic_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-clinic} -d ${DB_NAME:-clinic_booking}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Postgres is NOT exposed on the host in production — only the app talks to it
+    networks:
+      - internal
+
+  # ── Next.js application ─────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:-https://clinic.example.com}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+
+      # Database — references the internal postgres service
+      DATABASE_URL: postgresql://${DB_USER:-clinic}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-clinic_booking}
+
+      # Secrets — set these in .env.prod (never commit real values)
+      STAFF_SESSION_SECRET: ${STAFF_SESSION_SECRET}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET}
+
+      # WhatsApp Cloud API
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_TOKEN: ${WHATSAPP_TOKEN:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WA_PHONE_CHANNEL_MAP: ${WA_PHONE_CHANNEL_MAP:-}
+      WA_TEMPLATE_REENGAGEMENT: ${WA_TEMPLATE_REENGAGEMENT:-clinic_reengagement}
+      WA_TEMPLATE_BOOKING_CONFIRM: ${WA_TEMPLATE_BOOKING_CONFIRM:-clinic_booking_confirmation}
+      WA_TEMPLATE_REMINDER: ${WA_TEMPLATE_REMINDER:-clinic_appointment_reminder}
+
+      # Meta (Instagram / Messenger)
+      META_APP_SECRET: ${META_APP_SECRET:-}
+      META_VERIFY_TOKEN: ${META_VERIFY_TOKEN:-}
+
+      # Wix widget — MUST be set in production
+      WIDGET_ALLOWED_ORIGINS: ${WIDGET_ALLOWED_ORIGINS}
+
+      # TikTok (disabled until approved access obtained)
+      TIKTOK_ENABLED: ${TIKTOK_ENABLED:-false}
+      TIKTOK_APP_SECRET: ${TIKTOK_APP_SECRET:-}
+
+      # Google Sheets sync (optional)
+      GOOGLE_SHEET_ID: ${GOOGLE_SHEET_ID:-}
+      GOOGLE_SERVICE_ACCOUNT_EMAIL: ${GOOGLE_SERVICE_ACCOUNT_EMAIL:-}
+      GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: ${GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY:-}
+      GOOGLE_SHEET_TAB: ${GOOGLE_SHEET_TAB:-Bookings}
+
+      # Claude AI
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+
+    ports:
+      # Expose only on localhost — put Caddy/Nginx in front for HTTPS
+      - "127.0.0.1:3000:3000"
+    networks:
+      - internal
+      - external
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 15s
+      timeout: 5s
+      start_period: 45s
+      retries: 5
+
+networks:
+  internal:
+    driver: bridge
+    internal: true      # postgres is unreachable from outside
+  external:
+    driver: bridge
+
+volumes:
+  clinic_pg_data:
+    driver: local
